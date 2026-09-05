@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { commitSubtitle } from "@/lib/github";
-import { MAX_FILE_BYTES, safeSegment, type MediaType, type SubtitleRecord, validateSubtitle } from "@/lib/subtitles";
+import { decodeSubtitle, MAX_FILE_BYTES, safeSegment, type MediaType, type SubtitleRecord, validateSubtitle } from "@/lib/subtitles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
 
     const extension = file.name.toLowerCase().split(".").pop();
     if (extension !== "srt" && extension !== "vtt") return error("Only .srt and .vtt files are accepted.", 415);
-    const text = (await file.text()).replace(/^\uFEFF/, "");
+    const text = decodeSubtitle(await file.arrayBuffer()).replace(/^\uFEFF/, "");
     const validationError = validateSubtitle(text, extension);
     if (validationError) return error(validationError, 422);
 

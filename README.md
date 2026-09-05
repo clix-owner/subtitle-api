@@ -21,6 +21,9 @@ subtitles/tv/{tmdbId}/season-{n}/episode-{n}/{languageCode}/{uuid}.vtt
 
 Send `POST /api/subtitles` as `multipart/form-data`. Required fields are `file`, `mediaType`, `tmdbId`, `language`, and `languageCode`. TV submissions also require `season` and `episode`. If configured, send the upload key as `x-upload-key` or `uploadKey`.
 
+UTF-8 and UTF-16 SRT/VTT files up to 3 MB are accepted. Stored subtitle files
+are normalized to UTF-8.
+
 ## Vercel deployment
 
 Import this directory as a Vercel project, add the environment variables above, then deploy. The GitHub token is used only by the server route and is never bundled into the browser.

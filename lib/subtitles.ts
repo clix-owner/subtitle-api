@@ -18,6 +18,23 @@ export type SubtitleRecord = {
   submittedAt: string;
 };
 
+/** Decode common Unicode subtitle encodings; GitHub storage remains UTF-8. */
+export function decodeSubtitle(bytes: ArrayBuffer): string {
+  const view = new Uint8Array(bytes);
+  if (view.length >= 2 && view[0] === 0xff && view[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(view.subarray(2));
+  }
+  if (view.length >= 2 && view[0] === 0xfe && view[1] === 0xff) {
+    return new TextDecoder("utf-16be").decode(view.subarray(2));
+  }
+  const offset = view.length >= 3 && view[0] === 0xef && view[1] === 0xbb && view[2] === 0xbf ? 3 : 0;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(view.subarray(offset));
+  } catch {
+    throw new Error("Unsupported subtitle encoding. Use UTF-8 or UTF-16.");
+  }
+}
+
 export function safeSegment(value: string, fallback: string) {
   const safe = value
     .normalize("NFKD")
