@@ -23,8 +23,9 @@ export default function Home() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Upload failed.");
       setResult(body);
-      form.reset();
-      setFile(null); setMediaType("movie");
+      // Keep metadata and the upload key ready for the next submission.
+      if (input.current) input.current.value = "";
+      setFile(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed.");
     } finally { setBusy(false); }
