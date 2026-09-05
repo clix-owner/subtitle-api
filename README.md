@@ -13,9 +13,8 @@ Vercel-ready UI and API that commits uploaded `.srt` and `.vtt` subtitles plus J
 
 ```text
 subtitles/movie/{tmdbId}/{languageCode}/{uuid}.srt
-subtitles/movie/{tmdbId}/{languageCode}/{uuid}.json
+subtitles.json  # shared catalog: all subtitle URLs and metadata
 subtitles/tv/{tmdbId}/season-{n}/episode-{n}/{languageCode}/{uuid}.vtt
-subtitles/tv/{tmdbId}/season-{n}/episode-{n}/{languageCode}/{uuid}.json
 ```
 
 ## API

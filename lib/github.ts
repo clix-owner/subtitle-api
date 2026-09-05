@@ -1,4 +1,6 @@
+import type { SubtitleRecord } from "./subtitles";
 type GithubConfig = { token: string; owner: string; repo: string; branch: string };
+class GithubError extends Error { constructor(public status: number) { super(`GitHub storage request failed (${status}).`); } }
 
 function config(): GithubConfig {
   const token = process.env.GITHUB_TOKEN?.trim();
@@ -28,9 +30,7 @@ async function github<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
     console.error("GitHub API error", response.status, body.slice(0, 500));
-    throw new Error(response.status === 401 || response.status === 403
-      ? "GitHub rejected the server credentials or repository permission."
-      : `GitHub storage request failed (${response.status}).`);
+    throw new GithubError(response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -38,48 +38,54 @@ async function github<T>(path: string, init: RequestInit = {}): Promise<T> {
 export async function commitSubtitle(input: {
   subtitlePath: string;
   subtitleText: string;
-  metadataPath: string;
-  metadataText: string;
+  record: SubtitleRecord;
   message: string;
 }) {
   const { owner, repo, branch } = config();
   const base = `/repos/${owner}/${repo}`;
-  const ref = await github<{ object: { sha: string } }>(`${base}/git/ref/heads/${encodeURIComponent(branch)}`);
-  const parentSha = ref.object.sha;
-  const commit = await github<{ tree: { sha: string } }>(`${base}/git/commits/${parentSha}`);
-  const [subtitleBlob, metadataBlob] = await Promise.all([
-    github<{ sha: string }>(`${base}/git/blobs`, {
-      method: "POST",
-      body: JSON.stringify({ content: input.subtitleText, encoding: "utf-8" }),
-    }),
-    github<{ sha: string }>(`${base}/git/blobs`, {
-      method: "POST",
-      body: JSON.stringify({ content: input.metadataText, encoding: "utf-8" }),
-    }),
-  ]);
-  const tree = await github<{ sha: string }>(`${base}/git/trees`, {
-    method: "POST",
-    body: JSON.stringify({
-      base_tree: commit.tree.sha,
-      tree: [
-        { path: input.subtitlePath, mode: "100644", type: "blob", sha: subtitleBlob.sha },
-        { path: input.metadataPath, mode: "100644", type: "blob", sha: metadataBlob.sha },
-      ],
-    }),
-  });
-  const created = await github<{ sha: string; html_url: string }>(`${base}/git/commits`, {
-    method: "POST",
-    body: JSON.stringify({ message: input.message, tree: tree.sha, parents: [parentSha] }),
-  });
-  await github(`${base}/git/refs/heads/${encodeURIComponent(branch)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ sha: created.sha, force: false }),
-  });
   const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}`;
-  return {
-    commitSha: created.sha,
-    commitUrl: created.html_url,
-    subtitleUrl: `${rawBase}/${input.subtitlePath.split("/").map(encodeURIComponent).join("/")}`,
-    metadataUrl: `${rawBase}/${input.metadataPath.split("/").map(encodeURIComponent).join("/")}`,
-  };
+  const subtitleUrl = `${rawBase}/${input.subtitlePath.split("/").map(encodeURIComponent).join("/")}`;
+  const metadataPath = "subtitles.json";
+  const subtitleBlob = await github<{ sha: string }>(`${base}/git/blobs`, {
+    method: "POST", body: JSON.stringify({ content: input.subtitleText, encoding: "utf-8" }),
+  });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const ref = await github<{ object: { sha: string } }>(`${base}/git/ref/heads/${encodeURIComponent(branch)}`);
+    const parentSha = ref.object.sha;
+    const commit = await github<{ tree: { sha: string } }>(`${base}/git/commits/${parentSha}`);
+    const root = await github<{ tree: { path: string; sha: string; type: string }[] }>(`${base}/git/trees/${commit.tree.sha}`);
+    const existing = root.tree.find(entry => entry.path === metadataPath);
+    let catalog: { subtitles: Record<string, unknown>[]; [key: string]: unknown } = { subtitles: [] };
+    if (existing) {
+      if (existing.type !== "blob") throw new Error("subtitles.json must be a file.");
+      const blob = await github<{ content: string; encoding: string }>(`${base}/git/blobs/${existing.sha}`);
+      if (blob.encoding !== "base64") throw new Error("Unsupported catalog encoding.");
+      catalog = JSON.parse(Buffer.from(blob.content, "base64").toString("utf8"));
+      if (!catalog || !Array.isArray(catalog.subtitles)) throw new Error("Invalid subtitles.json; existing data was not overwritten.");
+    }
+    catalog.subtitles = [...catalog.subtitles.filter(entry => entry.id !== input.record.id), { ...input.record, url: subtitleUrl }];
+    const metadataBlob = await github<{ sha: string }>(`${base}/git/blobs`, {
+      method: "POST", body: JSON.stringify({ content: JSON.stringify(catalog, null, 2) + "\n", encoding: "utf-8" }),
+    });
+    const tree = await github<{ sha: string }>(`${base}/git/trees`, {
+      method: "POST", body: JSON.stringify({ base_tree: commit.tree.sha, tree: [
+        { path: input.subtitlePath, mode: "100644", type: "blob", sha: subtitleBlob.sha },
+        { path: metadataPath, mode: "100644", type: "blob", sha: metadataBlob.sha },
+      ] }),
+    });
+    const created = await github<{ sha: string; html_url: string }>(`${base}/git/commits`, {
+      method: "POST", body: JSON.stringify({ message: input.message, tree: tree.sha, parents: [parentSha] }),
+    });
+    try {
+      await github(`${base}/git/refs/heads/${encodeURIComponent(branch)}`, {
+        method: "PATCH", body: JSON.stringify({ sha: created.sha, force: false }),
+      });
+      return { commitSha: created.sha, commitUrl: created.html_url, subtitleUrl, metadataUrl: `${rawBase}/${metadataPath}` };
+    } catch (error) {
+      if (!(error instanceof GithubError) || ![409, 422].includes(error.status) || attempt === 3) throw error;
+      const latest = await github<{ object: { sha: string } }>(`${base}/git/ref/heads/${encodeURIComponent(branch)}`);
+      if (latest.object.sha === parentSha) throw error;
+    }
+  }
+  throw new Error("Repository changed repeatedly. Please retry the upload.");
 }

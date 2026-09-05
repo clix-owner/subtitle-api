@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     const episodePath = mediaType === "tv" ? `/season-${season}/episode-${episode}` : "";
     const basePath = `subtitles/${mediaType}/${tmdbId}${episodePath}/${languageCode}`;
     const subtitlePath = `${basePath}/${id}.${extension}`;
-    const metadataPath = `${basePath}/${id}.json`;
+    const metadataPath = "subtitles.json";
     const record: SubtitleRecord = {
       id, mediaType, tmdbId, season, episode, language, languageCode, releaseName,
       format: extension, originalFilename: file.name.slice(0, 255), subtitlePath, metadataPath,
@@ -72,8 +72,7 @@ export async function POST(request: Request) {
     const stored = await commitSubtitle({
       subtitlePath,
       subtitleText: text,
-      metadataPath,
-      metadataText: `${JSON.stringify(record, null, 2)}\n`,
+      record,
       message: `Add ${mediaType} ${tmdbId} ${languageCode} subtitle [skip ci]`,
     });
     return NextResponse.json({ ok: true, subtitle: record, ...stored }, { status: 201 });
